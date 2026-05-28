@@ -1,0 +1,117 @@
+# ==========================================
+# --- 6. SHAP Explainability ---
+# ==========================================
+
+print("\nΥπολογισμός SHAP values για πλήρη ερμηνευσιμότητα...")
+
+# Αν δεν υπάρχει εγκατεστημένο το shap, προσπάθησε να το εγκαταστήσεις αυτόματα.
+try:
+    import shap
+except ModuleNotFoundError:
+    import sys
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "shap"])
+    import shap
+
+from pathlib import Path
+
+SHAP_DIR = Path("shap_outputs")
+SHAP_DIR.mkdir(exist_ok=True)
+
+# Για binary XGBoost, τα SHAP values εδώ εξηγούν το class 1.
+# Με το LabelEncoder που χρησιμοποιήθηκε παραπάνω:
+positive_class = le.classes_[1]
+negative_class = le.classes_[0]
+print(f"Τα SHAP plots εξηγούν κυρίως την πιθανότητα για class 1: {positive_class}")
+print(f"Class 0: {negative_class}")
+
+X_test_shap = X_test.copy()
+
+explainer = shap.TreeExplainer(xgb_model)
+shap_values = explainer.shap_values(X_test_shap)
+expected_value = explainer.expected_value
+
+# Σε κάποιες εκδόσεις SHAP/XGBoost μπορεί να επιστραφεί list αντί για ndarray.
+# Κρατάμε τα SHAP values του positive class.
+if isinstance(shap_values, list):
+    shap_values_for_plot = shap_values[1]
+    if isinstance(expected_value, (list, np.ndarray)):
+        expected_value_for_plot = expected_value[1]
+    else:
+        expected_value_for_plot = expected_value
+else:
+    shap_values_for_plot = shap_values
+    expected_value_for_plot = expected_value
+
+# --- Global explainability: SHAP bar plot ---
+plt.figure(figsize=(10, 6))
+shap.summary_plot(
+    shap_values_for_plot,
+    X_test_shap,
+    plot_type="bar",
+    show=False
+)
+plt.title("SHAP Feature Importance (Μέση Απόλυτη Επιρροή)", fontsize=14)
+plt.tight_layout()
+plt.savefig(SHAP_DIR / "shap_feature_importance_bar.png", dpi=300, bbox_inches="tight")
+plt.show()
+
+# --- Global explainability: SHAP beeswarm plot ---
+plt.figure(figsize=(10, 6))
+shap.summary_plot(
+    shap_values_for_plot,
+    X_test_shap,
+    show=False
+)
+plt.title("SHAP Beeswarm: Πώς οι τιμές επηρεάζουν τη διάγνωση", fontsize=14)
+plt.tight_layout()
+plt.savefig(SHAP_DIR / "shap_beeswarm.png", dpi=300, bbox_inches="tight")
+plt.show()
+
+print("\n--- Εξήγηση Απόφασης για Μεμονωμένο Ασθενή (Local Explainability) ---")
+
+patient_index = 0
+patient_row = X_test_shap.iloc[patient_index]
+patient_probability = xgb_model.predict_proba(patient_row.to_frame().T)[0, 1]
+patient_prediction = positive_class if patient_probability >= best_thr else negative_class
+
+print(f"Ασθενής index: {patient_index}")
+print(f"Πιθανότητα για {positive_class}: {patient_probability:.3f}")
+print(f"Threshold που βρέθηκε: {best_thr:.2f}")
+print(f"Τελική πρόβλεψη: {patient_prediction}")
+
+# --- Local explainability: force plot ---
+plt.figure(figsize=(12, 4))
+shap.force_plot(
+    expected_value_for_plot,
+    shap_values_for_plot[patient_index],
+    patient_row,
+    feature_names=features,
+    matplotlib=True,
+    show=False
+)
+plt.title(
+    f"SHAP Force Plot: Γιατί ο ασθενής {patient_index} πήρε αυτή την πρόβλεψη;",
+    fontsize=12
+)
+plt.tight_layout()
+plt.savefig(SHAP_DIR / f"shap_force_patient_{patient_index}.png", dpi=300, bbox_inches="tight")
+plt.show()
+
+# --- Local explainability: waterfall plot ---
+# Το waterfall είναι πιο καθαρό για παρουσίαση γιατί δείχνει ποια features ανέβασαν/κατέβασαν την πρόβλεψη.
+patient_explanation = shap.Explanation(
+    values=shap_values_for_plot[patient_index],
+    base_values=expected_value_for_plot,
+    data=patient_row.values,
+    feature_names=features
+)
+
+plt.figure(figsize=(10, 6))
+shap.plots.waterfall(patient_explanation, max_display=12, show=False)
+plt.title(f"SHAP Waterfall Plot για ασθενή {patient_index}", fontsize=12)
+plt.tight_layout()
+plt.savefig(SHAP_DIR / f"shap_waterfall_patient_{patient_index}.png", dpi=300, bbox_inches="tight")
+plt.show()
+
+print(f"\nΤα SHAP plots αποθηκεύτηκαν στον φάκελο: {SHAP_DIR.resolve()}")

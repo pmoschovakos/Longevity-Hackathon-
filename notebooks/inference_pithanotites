@@ -1,0 +1,78 @@
+import pandas as pd
+import numpy as np
+import joblib
+
+# 1. Φόρτωση του έτοιμου μοντέλου
+# (Βεβαιώσου ότι το αρχείο 'mash_ckm_model.pkl' βρίσκεται στον ίδιο φάκελο)
+model = joblib.load('mash_ckm_model.pkl') 
+
+# 2. Φόρτωση των δεδομένων του νέου ασθενή
+new_df = pd.read_csv('EHR_1981-02-14.csv')
+
+# 3. Robust Clean: Καθαρίζει αγκύλες και μετατρέπει σε αριθμούς
+def robust_clean(val):
+    if isinstance(val, str):
+        # Αφαιρεί τα πάντα εκτός από νούμερα, τελεία, μείον, e, E
+        val = val.replace('[', '').replace(']', '').split()[0].strip()
+        try: return float(val)
+        except: return np.nan
+    return val
+
+# 4. Feature Mapping: Μετατροπή των ονομάτων από το αρχείο στα ονόματα του μοντέλου
+mapping = {
+    'ast': 'ast',
+    'alt': 'alt',
+    'platelets': 'platelets',
+    'fib4_computed': 'fib4_score',
+    'glucose': 'glucose',
+    'bilirubin_total': 'bilirubin',
+    'age': 'age',
+    'inr': 'inr'
+}
+
+X_input = pd.DataFrame()
+for raw_name, model_name in mapping.items():
+    if raw_name in new_df.columns:
+        X_input[model_name] = new_df[raw_name].apply(robust_clean)
+    else:
+        X_input[model_name] = np.nan
+
+# 5. Feature Engineering: Δημιουργία των έξτρα features
+X_input['ast_alt_ratio'] = X_input['ast'] / X_input['alt']
+X_input['has_thrombocytopenia'] = (X_input['platelets'] < 150).astype(int)
+X_input['is_senior'] = (X_input['age'] > 65).astype(int)
+X_input['apri_score'] = ((X_input['ast'] / 40) / X_input['platelets']) * 100 
+X_input['metabolic_risk'] = (X_input['glucose'] > 125).astype(int)
+X_input['severity_proxy'] = X_input['fib4_score'] * (X_input['inr'] + 1)
+
+# 6. Imputation (Γέμισμα κενών με διάμεσο του συγκεκριμένου ασθενή)
+X_input = X_input.fillna(X_input.median())
+
+# 7. Ευθυγράμμιση: Η σωστή σειρά των στηλών (Πολύ σημαντικό)
+expected_features = [
+    'ast', 'alt', 'ast_alt_ratio', 'platelets', 'fib4_score', 
+    'glucose', 'bilirubin', 'age', 'inr', 'has_thrombocytopenia', 
+    'is_senior', 'apri_score', 'metabolic_risk', 'severity_proxy'
+]
+X_input = X_input[expected_features]
+
+# 8. Τελική Πρόβλεψη με Προσαρμοσμένο Κλινικό Κατώφλι
+probability = model.predict_proba(X_input)
+
+# Η πιθανότητα για την κλάση 1 (MASH) για τον πρώτο (και μοναδικό) ασθενή της γραμμής
+mash_prob = probability[0][1] 
+
+# ΚΛΙΝΙΚΗ ΑΠΟΦΑΣΗ: Αν η πιθανότητα είναι πάνω από 15%, χτυπάει "καμπανάκι"
+CLINICAL_THRESHOLD = 0.15 
+
+print(f"--- ΤΕΛΙΚΟ ΑΠΟΤΕΛΕΣΜΑ ---")
+if mash_prob >= CLINICAL_THRESHOLD:
+    status = "ΠΙΘΑΝΟ MASH (Απαιτείται περαιτέρω κλινικός έλεγχος)"
+    print(f"🚨 Διάγνωση: {status}")
+else:
+    status = "Άλλη Πάθηση / Χαμηλός Κίνδυνος MASH"
+    print(f"✅ Διάγνωση: {status}")
+
+print(f"Πιθανότητα MASH: {mash_prob * 100:.2f}%")
+print(f"Πιθανότητα Άλλης Πάθησης: {probability[0][0] * 100:.2f}%")
+print(f"(Το σύστημα λειτουργεί με όριο ευαισθησίας screening στο {CLINICAL_THRESHOLD * 100}%)")
