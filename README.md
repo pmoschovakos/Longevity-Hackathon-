@@ -14,4 +14,9 @@ We propose an ML-based pre-screening pipeline that uses structured clinical/lab 
 5. Use SHAP for explainability.
 
 ## Repository Structure
-Explain folders here.
+### important note; the data isn't uploaded in the GitHub repo because it's private and sourced from the MIMIC III database.
+Clinical notes that were given by the organizations. 
+Our data plan.md. 
+Our machine learning approach our notebooks show folder that includes the deliverable notebook for the live example.(Don't run LLM command).
+It also includes my file that explains what we worked on.
+On the presentation folder, we've got our presentation and I readme file.
